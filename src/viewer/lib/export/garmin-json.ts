@@ -476,8 +476,10 @@ function buildExecutableStep(p: ParsedStep, stepOrder: number, childStepId: numb
   let targetValueTwo: number | null = null;
   if (p.pace) {
     targetType = { workoutTargetTypeId: 6, workoutTargetTypeKey: "pace.zone", displayOrder: 6 };
-    targetValueOne = p.pace.fastMps;
-    targetValueTwo = p.pace.slowMps;
+    // Round to 7 decimals — matches Garmin's native format. JS float full precision
+    // (16 decimals) crashes the Garmin Connect mobile app on workout open.
+    targetValueOne = Math.round(p.pace.fastMps * 1e7) / 1e7;
+    targetValueTwo = Math.round(p.pace.slowMps * 1e7) / 1e7;
   } else if (p.hr) {
     targetType = {
       workoutTargetTypeId: 4,
@@ -599,9 +601,18 @@ function buildSingleStep(workout: Workout): any {
   const totalSeconds = (workout.durationMinutes ?? 0) * 60;
   const distanceMeters = workout.distanceMeters ?? null;
 
+  // Workout types where the goal is time-on-feet at an intensity (tempo, threshold)
+  // → use time. Otherwise (easy, long, steady, recovery, race) → use distance when
+  // available so the watch and Garmin Connect UI show "X km", not "0 km" with a
+  // time-derived step.
+  const timePriorityTypes = new Set(["tempo", "threshold", "intervals", "vo2max", "fartlek"]);
+
   let endCondition: "time" | "distance" | "lap.button";
   let value: number | undefined;
-  if (totalSeconds > 0) {
+  if (distanceMeters && distanceMeters > 0 && !timePriorityTypes.has(workout.type as string)) {
+    endCondition = "distance";
+    value = distanceMeters;
+  } else if (totalSeconds > 0) {
     endCondition = "time";
     value = totalSeconds;
   } else if (distanceMeters && distanceMeters > 0) {
@@ -656,13 +667,27 @@ export function generateGarminJson(
 
   const totalSeconds = (workout.durationMinutes ?? 0) * 60;
   const distanceMeters = workout.distanceMeters ?? null;
-  const description = (workout.humanReadable ?? workout.description ?? "").slice(0, 1024);
+  // Strip emoji + control chars from name (Garmin Connect mobile chokes on them).
+  const safeName = (workout.name ?? "")
+    .replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  // Average training speed: rough m/s estimate from total distance and duration.
+  // Real Garmin workouts include this — mobile app may use it for display.
+  const avgTrainingSpeed =
+    distanceMeters && totalSeconds ? Math.round((distanceMeters / totalSeconds) * 1e7) / 1e7 : null;
 
   const payload = {
-    workoutName: workout.name,
-    description: description || null,
+    workoutName: safeName,
+    description: null,
+    updatedDate: null,
+    createdDate: null,
     sportType: sport,
     subSportType: "GENERIC",
+    trainingPlanId: null,
+    author: null,
+    sharedWithUsers: null,
     estimatedDurationInSecs: totalSeconds || null,
     estimatedDistanceInMeters: distanceMeters,
     workoutSegments: [
@@ -680,6 +705,25 @@ export function generateGarminJson(
         workoutSteps: steps,
       },
     ],
+    poolLength: null,
+    poolLengthUnit: null,
+    locale: null,
+    workoutProvider: null,
+    workoutSourceId: null,
+    uploadTimestamp: null,
+    atpPlanId: null,
+    consumer: null,
+    consumerName: null,
+    consumerImageURL: null,
+    consumerWebsiteURL: null,
+    workoutNameI18nKey: null,
+    descriptionI18nKey: null,
+    avgTrainingSpeed,
+    estimateType: distanceMeters ? "DISTANCE_ESTIMATED" : null,
+    estimatedDistanceUnit: { unitId: null, unitKey: null, factor: null },
+    workoutThumbnailUrl: null,
+    isSessionTransitionEnabled: null,
+    shared: false,
   };
 
   return JSON.stringify(payload, null, 2);

@@ -39,7 +39,7 @@
     "consola": "^3.2.3",
     "jszip": "^3.10.1",
     "open": "^10.1.0",
-    "undici": "^7.16.0"
+    "undici": "^7.29.0"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^7.2.0",
